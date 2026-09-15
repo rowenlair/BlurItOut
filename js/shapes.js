@@ -21,6 +21,14 @@ export class BlurShape {
     this.centerY = centerY;
     this.width = width;
     this.height = height;
+
+    /**
+     * The pre-blurred pixels for this shape's region, set by
+     * `BlurProcessor.blurRegion()` right after the shape is created (and
+     * refreshed if the blur strength changes later).
+     * @type {{canvas: HTMLCanvasElement, x: number, y: number}|null}
+     */
+    this.blurredPatch = null;
   }
 
   /**

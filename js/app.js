@@ -11,7 +11,7 @@ import { ImageExporter } from "./imageExporter.js";
 class App {
   constructor() {
     this._sourceImage = null; // HTMLImageElement holding the sharp, unblurred image
-    this._blurredCanvas = null; // last blurred render, reused until settings change
+    this._sourceCanvas = null; // same image drawn onto a canvas, so image-js can read its pixels
 
     this._shapeManager = new ShapeManager();
     this._blurProcessor = new BlurProcessor();
@@ -53,7 +53,7 @@ class App {
     this.blurStrengthInput.addEventListener("input", () => {
       this.blurStrengthValue.textContent = this.blurStrengthInput.value;
     });
-    this.blurStrengthInput.addEventListener("change", () => this._recomputeBlurAndRender());
+    this.blurStrengthInput.addEventListener("change", () => this._reblurAllShapes());
 
     this.undoButton.addEventListener("click", () => {
       this._shapeManager.removeLast();
@@ -68,8 +68,11 @@ class App {
   }
 
   /**
-   * Load the file the user picked into an `<img>` element, size the
-   * canvas to match, and run the initial blur pass.
+   * Load the file the user picked into an `<img>` element, draw it onto
+   * an offscreen canvas (so image-js can later read its pixels), and
+   * size the visible canvas to match. No blurring happens yet — only
+   * placed shapes ever get blurred, and only the small region under
+   * them, so loading even a large photo stays instant.
    * @param {Event} event - the file input's `change` event
    */
   _handleImageSelected(event) {
@@ -83,18 +86,25 @@ class App {
     image.onload = () => {
       URL.revokeObjectURL(objectUrl);
       this._sourceImage = image;
+
+      this._sourceCanvas = document.createElement("canvas");
+      this._sourceCanvas.width = image.naturalWidth;
+      this._sourceCanvas.height = image.naturalHeight;
+      this._sourceCanvas.getContext("2d").drawImage(image, 0, 0);
+
       this._shapeManager.clear();
       this._renderer.setCanvasSize(image.naturalWidth, image.naturalHeight);
       this.canvas.style.display = "block";
       this.emptyState.style.display = "none";
-      this._recomputeBlurAndRender();
+      this._render();
     };
     image.src = objectUrl;
   }
 
   /**
    * Handle a click on the canvas: place a new blur shape at the click
-   * location, using whatever shape type/size is currently selected.
+   * location, using whatever shape type/size is currently selected,
+   * blur just that shape's region, and redraw.
    * @param {MouseEvent} event
    */
   _handleCanvasClick(event) {
@@ -102,42 +112,48 @@ class App {
       return;
     }
     const { x, y } = this._renderer.eventToImageCoordinates(event);
-    this._shapeManager.addShape(
+    const shape = this._shapeManager.addShape(
       this.shapeTypeSelect.value,
       x,
       y,
       Number(this.shapeWidthInput.value),
       Number(this.shapeHeightInput.value)
     );
+    this._blurShape(shape);
     this._render();
   }
 
   /**
-   * Re-run the gaussian blur over the current source image (used when
-   * a new image is loaded or the blur strength changes) and redraw.
+   * Compute and attach the blurred patch for a single shape, using the
+   * currently selected blur strength.
+   * @param {import("./shapes.js").BlurShape} shape
    */
-  _recomputeBlurAndRender() {
+  _blurShape(shape) {
+    const sigma = Number(this.blurStrengthInput.value);
+    shape.blurredPatch = this._blurProcessor.blurRegion(this._sourceCanvas, shape.getBoundingBox(), sigma);
+  }
+
+  /**
+   * Re-blur every existing shape's region (used when the blur strength
+   * slider changes) and redraw. Each shape's region is small, so this
+   * stays fast no matter how large the source image is.
+   */
+  _reblurAllShapes() {
     if (!this._sourceImage) {
       return;
     }
-    // Draw the source image onto a plain canvas first, since image-js
-    // reads pixels from a canvas rather than an <img> element directly.
-    const sourceCanvas = document.createElement("canvas");
-    sourceCanvas.width = this._sourceImage.naturalWidth;
-    sourceCanvas.height = this._sourceImage.naturalHeight;
-    sourceCanvas.getContext("2d").drawImage(this._sourceImage, 0, 0);
-
-    const sigma = Number(this.blurStrengthInput.value);
-    this._blurredCanvas = this._blurProcessor.computeBlurredCanvas(sourceCanvas, sigma);
+    for (const shape of this._shapeManager.getShapes()) {
+      this._blurShape(shape);
+    }
     this._render();
   }
 
-  /** Redraw the canvas with the current image, blur, and shapes. */
+  /** Redraw the canvas with the current image and shapes. */
   _render() {
-    if (!this._sourceImage || !this._blurredCanvas) {
+    if (!this._sourceImage) {
       return;
     }
-    this._renderer.render(this._sourceImage, this._blurredCanvas, this._shapeManager.getShapes());
+    this._renderer.render(this._sourceImage, this._shapeManager.getShapes());
   }
 
   /** Export the current canvas contents in the selected format. */
