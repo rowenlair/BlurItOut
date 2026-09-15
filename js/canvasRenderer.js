@@ -1,7 +1,7 @@
 /**
  * Draws the final composited image: the sharp original image, with each
- * placed blur shape's region "punched through" to the fully blurred
- * copy of the image.
+ * placed blur shape's region "punched through" to that shape's own
+ * pre-blurred patch (see blurProcessor.js).
  */
 export class CanvasRenderer {
   /**
@@ -26,12 +26,12 @@ export class CanvasRenderer {
 
   /**
    * Redraw the whole scene: the sharp source image as the base layer,
-   * then each shape's region copied over from the blurred image.
+   * then each shape's own pre-blurred patch drawn in, clipped to that
+   * shape's outline. Shapes without a computed patch yet are skipped.
    * @param {HTMLCanvasElement|HTMLImageElement} sourceImage - the sharp, unblurred image
-   * @param {HTMLCanvasElement} blurredCanvas - a fully blurred copy of the same image
    * @param {import("./shapes.js").BlurShape[]} shapes - shapes to reveal as blurred
    */
-  render(sourceImage, blurredCanvas, shapes) {
+  render(sourceImage, shapes) {
     const { ctx } = this;
     const { width, height } = this.displayCanvas;
 
@@ -39,10 +39,14 @@ export class CanvasRenderer {
     ctx.drawImage(sourceImage, 0, 0, width, height);
 
     for (const shape of shapes) {
+      if (!shape.blurredPatch) {
+        continue;
+      }
+      const { canvas: patchCanvas, x, y } = shape.blurredPatch;
       ctx.save();
       shape.traceClipPath(ctx);
       ctx.clip();
-      ctx.drawImage(blurredCanvas, 0, 0, width, height);
+      ctx.drawImage(patchCanvas, x, y);
       ctx.restore();
     }
   }
