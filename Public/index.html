@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Image Blur Editor</title>
+    <link rel="stylesheet" href="styles.css">
+
+
+</head>
+<body>
+
+<h1>Image Blur Editor</h1>
+
+<div id="dropzone">
+    Drag & drop an image here, or click to select one
+    <input type="file" id="fileInput" accept="image/*">
+</div>
+
+<div id="controls">
+    <label for="shapeSize">Blur: <span id="shapeSizeValue">0</span>px</label>
+    <input type="range" id="shapeSize" min="0" max="200" value="0" step="1">
+    <label for="blurAmount">Blur: <span id="blurAmountValue">0</span>px</label>
+    <input type="range" id="blurAmount" min="0" max="200" value="0" step="1">
+
+    <button id="downloadBtn">Download</button>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<script src="main.js"></script>
+
+</body>
+</html>

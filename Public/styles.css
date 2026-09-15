@@ -1,0 +1,39 @@
+
+body {
+    font-family: sans-serif;
+    max-width: 700px;
+    margin: 40px auto;
+    padding: 0 20px;
+    text-align: center;
+}
+#dropzone {
+    border: 2px dashed #888;
+    border-radius: 8px;
+    padding: 40px;
+    color: #666;
+    cursor: pointer;
+    margin-bottom: 20px;
+}
+#dropzone.dragover {
+    border-color: #333;
+    background: #f0f0f0;
+}
+#fileInput {
+    display: none;
+}
+#controls {
+    display: none;
+    margin-bottom: 20px;
+}
+#controls label {
+    margin-right: 10px;
+}
+canvas {
+    max-width: 100%;
+    border: 1px solid #ccc;
+}
+button {
+    padding: 8px 16px;
+    margin-left: 10px;
+    cursor: pointer;
+}
