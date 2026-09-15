@@ -27,11 +27,14 @@ export class CanvasRenderer {
   /**
    * Redraw the whole scene: the sharp source image as the base layer,
    * then each shape's own pre-blurred patch drawn in, clipped to that
-   * shape's outline. Shapes without a computed patch yet are skipped.
+   * shape's outline (shapes without a computed patch yet are skipped),
+   * and finally an optional translucent preview of the shape that
+   * would be placed if the user clicked right now.
    * @param {HTMLCanvasElement|HTMLImageElement} sourceImage - the sharp, unblurred image
-   * @param {import("./shapes.js").BlurShape[]} shapes - shapes to reveal as blurred
+   * @param {import("./shapes.js").BlurShape[]} shapes - already-placed shapes to reveal as blurred
+   * @param {import("./shapes.js").BlurShape|null} [previewShape] - an unplaced shape to draw as a preview outline
    */
-  render(sourceImage, shapes) {
+  render(sourceImage, shapes, previewShape = null) {
     const { ctx } = this;
     const { width, height } = this.displayCanvas;
 
@@ -49,6 +52,30 @@ export class CanvasRenderer {
       ctx.drawImage(patchCanvas, x, y);
       ctx.restore();
     }
+
+    if (previewShape) {
+      this._drawPreview(previewShape);
+    }
+  }
+
+  /**
+   * Draw a translucent grey preview of a shape that hasn't been placed
+   * yet, at its exact size and position, so the user can see what a
+   * click would produce before committing to it.
+   * @param {import("./shapes.js").BlurShape} previewShape
+   */
+  _drawPreview(previewShape) {
+    const { ctx } = this;
+    const outlineWidth = this._getDisplayScale() * 1.5;
+
+    ctx.save();
+    previewShape.traceClipPath(ctx);
+    ctx.fillStyle = "rgba(128, 128, 128, 0.45)";
+    ctx.fill();
+    ctx.lineWidth = outlineWidth;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+    ctx.stroke();
+    ctx.restore();
   }
 
   /**
@@ -65,5 +92,20 @@ export class CanvasRenderer {
       x: (event.clientX - rect.left) * scaleX,
       y: (event.clientY - rect.top) * scaleY,
     };
+  }
+
+  /**
+   * How many image pixels correspond to one on-screen CSS pixel, so
+   * overlay line widths stay a consistent visual thickness no matter
+   * how large the source image is or how much the canvas is scaled
+   * down to fit the page.
+   * @returns {number}
+   */
+  _getDisplayScale() {
+    const rect = this.displayCanvas.getBoundingClientRect();
+    if (rect.width === 0) {
+      return 1;
+    }
+    return this.displayCanvas.width / rect.width;
   }
 }

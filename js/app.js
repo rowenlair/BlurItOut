@@ -2,6 +2,7 @@ import { ShapeManager } from "./shapeManager.js";
 import { BlurProcessor } from "./blurProcessor.js";
 import { CanvasRenderer } from "./canvasRenderer.js";
 import { ImageExporter } from "./imageExporter.js";
+import { SHAPE_CLASSES_BY_TYPE } from "./shapes.js";
 
 /**
  * Top-level controller that wires the DOM controls to the shape,
@@ -12,6 +13,10 @@ class App {
   constructor() {
     this._sourceImage = null; // HTMLImageElement holding the sharp, unblurred image
     this._sourceCanvas = null; // same image drawn onto a canvas, so image-js can read its pixels
+
+    this._isHoveringCanvas = false; // whether the cursor is currently over the canvas
+    this._lastCursorImagePosition = null; // last known cursor position, in image pixels
+    this._previewShape = null; // ephemeral shape (never added to ShapeManager) shown under the cursor
 
     this._shapeManager = new ShapeManager();
     this._blurProcessor = new BlurProcessor();
@@ -43,12 +48,17 @@ class App {
   _bindEvents() {
     this.imageInput.addEventListener("change", (event) => this._handleImageSelected(event));
     this.canvas.addEventListener("click", (event) => this._handleCanvasClick(event));
+    this.canvas.addEventListener("mousemove", (event) => this._handleCanvasMouseMove(event));
+    this.canvas.addEventListener("mouseleave", () => this._handleCanvasMouseLeave());
 
+    this.shapeTypeSelect.addEventListener("change", () => this._updatePreviewShape());
     this.shapeWidthInput.addEventListener("input", () => {
       this.shapeWidthValue.textContent = this.shapeWidthInput.value;
+      this._updatePreviewShape();
     });
     this.shapeHeightInput.addEventListener("input", () => {
       this.shapeHeightValue.textContent = this.shapeHeightInput.value;
+      this._updatePreviewShape();
     });
     this.blurStrengthInput.addEventListener("input", () => {
       this.blurStrengthValue.textContent = this.blurStrengthInput.value;
@@ -93,6 +103,9 @@ class App {
       this._sourceCanvas.getContext("2d").drawImage(image, 0, 0);
 
       this._shapeManager.clear();
+      this._isHoveringCanvas = false;
+      this._lastCursorImagePosition = null;
+      this._previewShape = null;
       this._renderer.setCanvasSize(image.naturalWidth, image.naturalHeight);
       this.canvas.style.display = "block";
       this.emptyState.style.display = "none";
@@ -124,6 +137,50 @@ class App {
   }
 
   /**
+   * Track the cursor while it moves over the canvas and refresh the
+   * shape preview to follow it.
+   * @param {MouseEvent} event
+   */
+  _handleCanvasMouseMove(event) {
+    if (!this._sourceImage) {
+      return;
+    }
+    this._isHoveringCanvas = true;
+    this._lastCursorImagePosition = this._renderer.eventToImageCoordinates(event);
+    this._updatePreviewShape();
+  }
+
+  /** Hide the shape preview once the cursor leaves the canvas. */
+  _handleCanvasMouseLeave() {
+    this._isHoveringCanvas = false;
+    this._lastCursorImagePosition = null;
+    this._updatePreviewShape();
+  }
+
+  /**
+   * Rebuild the ephemeral preview shape from the current cursor
+   * position and the currently selected shape type/width/height, then
+   * redraw. The preview is never added to the `ShapeManager` and is
+   * never blurred — it's just an outline showing where and how big the
+   * next placed shape would be.
+   */
+  _updatePreviewShape() {
+    if (!this._sourceImage || !this._isHoveringCanvas || !this._lastCursorImagePosition) {
+      this._previewShape = null;
+    } else {
+      const ShapeClass = SHAPE_CLASSES_BY_TYPE[this.shapeTypeSelect.value];
+      const { x, y } = this._lastCursorImagePosition;
+      this._previewShape = new ShapeClass(
+        x,
+        y,
+        Number(this.shapeWidthInput.value),
+        Number(this.shapeHeightInput.value)
+      );
+    }
+    this._render();
+  }
+
+  /**
    * Compute and attach the blurred patch for a single shape, using the
    * currently selected blur strength.
    * @param {import("./shapes.js").BlurShape} shape
@@ -148,12 +205,12 @@ class App {
     this._render();
   }
 
-  /** Redraw the canvas with the current image and shapes. */
+  /** Redraw the canvas with the current image, shapes, and cursor preview. */
   _render() {
     if (!this._sourceImage) {
       return;
     }
-    this._renderer.render(this._sourceImage, this._shapeManager.getShapes());
+    this._renderer.render(this._sourceImage, this._shapeManager.getShapes(), this._previewShape);
   }
 
   /** Export the current canvas contents in the selected format. */
