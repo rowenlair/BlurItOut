@@ -69,9 +69,20 @@ export class CanvasRenderer {
   /**
    * Size the display canvas for a newly loaded image: cap the backing
    * store at `DISPLAY_MAX_DIM` (scaled further by devicePixelRatio for a
-   * crisp look on high-density screens), set the CSS size to match the
+   * crisp look on high-density screens), set the CSS width to match the
    * capped, uncapped-by-dpr dimensions, and record the transform that
    * maps image-pixel coordinates to backing-store pixels.
+   *
+   * Only `style.width` is set here — deliberately not `style.height`.
+   * An inline height would take precedence over the stylesheet's
+   * `#editor-canvas { height: auto }` rule, pinning the rendered height
+   * at this moment's value even after `max-width: 100%` shrinks the
+   * width to fit a narrower container/viewport, skewing the canvas.
+   * Leaving height on `auto` lets the browser derive it from the
+   * canvas's intrinsic width/height attributes (set below in the same
+   * ratio as `imageWidth`/`imageHeight`), so the on-screen box always
+   * keeps the source image's aspect ratio no matter how the container
+   * is resized.
    * @param {number} imageWidth
    * @param {number} imageHeight
    */
@@ -86,7 +97,7 @@ export class CanvasRenderer {
     const devicePixelRatio = window.devicePixelRatio || 1;
 
     this.displayCanvas.style.width = `${cssWidth}px`;
-    this.displayCanvas.style.height = `${cssHeight}px`;
+    this.displayCanvas.style.removeProperty("height");
     this.displayCanvas.width = Math.max(1, Math.round(cssWidth * devicePixelRatio));
     this.displayCanvas.height = Math.max(1, Math.round(cssHeight * devicePixelRatio));
 
