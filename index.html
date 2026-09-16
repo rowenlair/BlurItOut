@@ -9,10 +9,15 @@
 <body>
   <header class="app-header">
     <h1>BlurItOut</h1>
-    <p class="tagline">Upload a photo, click anywhere to drop a blur shape, and download the result.</p>
+    <p class="tagline">Upload a photo, drop a blur shape, drag it into place — all in your browser.</p>
   </header>
 
   <main class="app-layout">
+    <section class="canvas-panel">
+      <canvas id="editor-canvas" tabindex="0" aria-label="Image editor: tap or click to place a blur shape, drag to move it, drag its handles to resize it"></canvas>
+      <p id="empty-state" class="empty-state">Upload an image to get started.</p>
+    </section>
+
     <section class="controls-panel">
       <div class="control-group">
         <label for="image-input">1. Choose an image</label>
@@ -29,17 +34,21 @@
 
       <div class="control-group">
         <label for="shape-width">Width: <span id="shape-width-value">80</span>px</label>
-        <input type="range" id="shape-width" min="10" max="400" value="80" />
+        <input type="range" id="shape-width" min="8" max="400" value="80" />
       </div>
 
       <div class="control-group">
         <label for="shape-height">Height: <span id="shape-height-value">80</span>px</label>
-        <input type="range" id="shape-height" min="10" max="400" value="80" />
+        <input type="range" id="shape-height" min="8" max="400" value="80" />
       </div>
 
       <div class="control-group">
-        <label for="blur-strength">Blur strength: <span id="blur-strength-value">8</span></label>
-        <input type="range" id="blur-strength" min="1" max="30" value="8" />
+        <label for="blur-amount">Blur: <span id="blur-amount-value">35% (≈61px)</span></label>
+        <input type="range" id="blur-amount" min="0" max="100" step="1" value="35" />
+      </div>
+
+      <div class="control-group button-row">
+        <button id="delete-selected-btn" type="button" disabled>Delete selected</button>
       </div>
 
       <div class="control-group button-row">
@@ -59,12 +68,12 @@
         <button id="download-btn" type="button" class="primary-btn">Download image</button>
       </div>
 
-      <p class="hint">Click on the image to place a blur shape at that spot. Adjust the width, height, shape, and blur strength any time — new shapes use the current settings.</p>
-    </section>
-
-    <section class="canvas-panel">
-      <canvas id="editor-canvas"></canvas>
-      <p id="empty-state" class="empty-state">Upload an image to get started.</p>
+      <p class="hint">
+        Tap or click on the image to place a blur shape. Drag inside a shape to move it, or drag its
+        handles to resize it — the width/height sliders update to match, and vice versa. Adjust the
+        blur amount any time; 0% leaves the image untouched, 100% is a flat, unrecoverable smear.
+        Select a shape and press Delete, or use the button above, to remove it.
+      </p>
     </section>
   </main>
 

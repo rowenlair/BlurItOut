@@ -2,28 +2,58 @@ import { ShapeManager } from "./shapeManager.js";
 import { BlurProcessor } from "./blurProcessor.js";
 import { CanvasRenderer } from "./canvasRenderer.js";
 import { ImageExporter } from "./imageExporter.js";
+import { InteractionController } from "./interaction.js";
 import { SHAPE_CLASSES_BY_TYPE } from "./shapes.js";
+
+/** However small an image is, a blur-amount of 100% never resolves to a
+ * smaller radius than this — otherwise a maxed-out slider on a tiny
+ * image would barely blur anything. */
+const MIN_MAX_BLUR_RADIUS_PX = 200;
 
 /**
  * Top-level controller that wires the DOM controls to the shape,
- * blurring, rendering, and export logic. This is the only class that
- * touches the DOM directly.
+ * blurring, rendering, and interaction logic. This is the only class
+ * that touches the DOM directly.
  */
 class App {
   constructor() {
     this._sourceImage = null; // HTMLImageElement holding the sharp, unblurred image
-    this._sourceCanvas = null; // same image drawn onto a canvas, so image-js can read its pixels
 
-    this._isHoveringCanvas = false; // whether the cursor is currently over the canvas
-    this._lastCursorImagePosition = null; // last known cursor position, in image pixels
+    this._defaultShapeWidth = 80; // used for shapes created while nothing is selected
+    this._defaultShapeHeight = 80;
+    this._lastHoverPoint = null; // last known cursor position, in image pixels, or null
     this._previewShape = null; // ephemeral shape (never added to ShapeManager) shown under the cursor
 
     this._shapeManager = new ShapeManager();
     this._blurProcessor = new BlurProcessor();
-    this._renderer = new CanvasRenderer(document.getElementById("editor-canvas"));
 
     this._cacheDomElements();
+
+    this._renderer = new CanvasRenderer(this.canvas, this._blurProcessor);
+    this._interaction = new InteractionController(this.canvas, this._renderer, this._shapeManager, {
+      onCreateShape: (x, y) => this._createShapeAt(x, y),
+      onGeometryChanged: () => {
+        this._syncSelectionControls();
+        this._render();
+      },
+      onSelectionChanged: () => {
+        this._syncSelectionControls();
+        this._render();
+      },
+      onChanged: () => this._render(),
+      onHoverMove: (x, y) => {
+        this._lastHoverPoint = { x, y };
+        this._updatePreviewShape();
+      },
+      onHoverEnd: () => {
+        this._lastHoverPoint = null;
+        this._updatePreviewShape();
+      },
+    });
+
     this._bindEvents();
+    this._syncSelectionControls();
+    this._handleBlurAmountInput(); // sync the label with the actual mapping, replacing the HTML's static placeholder
   }
 
   /** Grab and store references to every DOM control the app needs. */
@@ -32,45 +62,51 @@ class App {
     this.shapeTypeSelect = document.getElementById("shape-type");
     this.shapeWidthInput = document.getElementById("shape-width");
     this.shapeHeightInput = document.getElementById("shape-height");
-    this.blurStrengthInput = document.getElementById("blur-strength");
+    this.blurAmountInput = document.getElementById("blur-amount");
     this.shapeWidthValue = document.getElementById("shape-width-value");
     this.shapeHeightValue = document.getElementById("shape-height-value");
-    this.blurStrengthValue = document.getElementById("blur-strength-value");
+    this.blurAmountValue = document.getElementById("blur-amount-value");
+    this.deleteSelectedButton = document.getElementById("delete-selected-btn");
     this.undoButton = document.getElementById("undo-shape-btn");
     this.clearButton = document.getElementById("clear-shapes-btn");
     this.downloadFormatSelect = document.getElementById("download-format");
     this.downloadButton = document.getElementById("download-btn");
     this.canvas = document.getElementById("editor-canvas");
     this.emptyState = document.getElementById("empty-state");
+
+    this._defaultShapeWidth = Number(this.shapeWidthInput.value);
+    this._defaultShapeHeight = Number(this.shapeHeightInput.value);
   }
 
-  /** Attach every event listener the app responds to. */
+  /** Attach every event listener the app responds to (excluding pointer/keyboard input on the canvas itself, which InteractionController owns). */
   _bindEvents() {
     this.imageInput.addEventListener("change", (event) => this._handleImageSelected(event));
-    this.canvas.addEventListener("click", (event) => this._handleCanvasClick(event));
-    this.canvas.addEventListener("mousemove", (event) => this._handleCanvasMouseMove(event));
-    this.canvas.addEventListener("mouseleave", () => this._handleCanvasMouseLeave());
 
     this.shapeTypeSelect.addEventListener("change", () => this._updatePreviewShape());
-    this.shapeWidthInput.addEventListener("input", () => {
-      this.shapeWidthValue.textContent = this.shapeWidthInput.value;
-      this._updatePreviewShape();
+
+    this.shapeWidthInput.addEventListener("input", () => this._handleShapeSizeInput("width"));
+    this.shapeHeightInput.addEventListener("input", () => this._handleShapeSizeInput("height"));
+
+    this.blurAmountInput.addEventListener("input", () => this._handleBlurAmountInput());
+
+    this.deleteSelectedButton.addEventListener("click", () => {
+      const selected = this._shapeManager.getSelected();
+      if (!selected) {
+        return;
+      }
+      this._shapeManager.remove(selected);
+      this._syncSelectionControls();
+      this._render();
     });
-    this.shapeHeightInput.addEventListener("input", () => {
-      this.shapeHeightValue.textContent = this.shapeHeightInput.value;
-      this._updatePreviewShape();
-    });
-    this.blurStrengthInput.addEventListener("input", () => {
-      this.blurStrengthValue.textContent = this.blurStrengthInput.value;
-    });
-    this.blurStrengthInput.addEventListener("change", () => this._reblurAllShapes());
 
     this.undoButton.addEventListener("click", () => {
       this._shapeManager.removeLast();
+      this._syncSelectionControls();
       this._render();
     });
     this.clearButton.addEventListener("click", () => {
       this._shapeManager.clear();
+      this._syncSelectionControls();
       this._render();
     });
 
@@ -78,11 +114,10 @@ class App {
   }
 
   /**
-   * Load the file the user picked into an `<img>` element, draw it onto
-   * an offscreen canvas (so image-js can later read its pixels), and
-   * size the visible canvas to match. No blurring happens yet — only
-   * placed shapes ever get blurred, and only the small region under
-   * them, so loading even a large photo stays instant.
+   * Load the file the user picked into an `<img>` element and reset all
+   * per-image state: shapes, selection, the blur base/cache, the
+   * display canvas's size, and the width/height/blur-amount controls'
+   * dynamic ranges.
    * @param {Event} event - the file input's `change` event
    */
   _handleImageSelected(event) {
@@ -97,16 +132,26 @@ class App {
       URL.revokeObjectURL(objectUrl);
       this._sourceImage = image;
 
-      this._sourceCanvas = document.createElement("canvas");
-      this._sourceCanvas.width = image.naturalWidth;
-      this._sourceCanvas.height = image.naturalHeight;
-      this._sourceCanvas.getContext("2d").drawImage(image, 0, 0);
-
       this._shapeManager.clear();
-      this._isHoveringCanvas = false;
-      this._lastCursorImagePosition = null;
+      this._lastHoverPoint = null;
       this._previewShape = null;
-      this._renderer.setCanvasSize(image.naturalWidth, image.naturalHeight);
+
+      this._blurProcessor.setSource(image);
+      this._renderer.setImageSize(image.naturalWidth, image.naturalHeight);
+      this._interaction.setImageBounds(image.naturalWidth, image.naturalHeight);
+
+      const maxShapeSize = Math.max(image.naturalWidth, image.naturalHeight);
+      this.shapeWidthInput.max = String(maxShapeSize);
+      this.shapeHeightInput.max = String(maxShapeSize);
+      // A default carried over from a larger image could exceed this
+      // image's bounds; clamp it so the slider and the label it drives
+      // (and the size newly created shapes actually get) stay in sync.
+      this._defaultShapeWidth = Math.min(this._defaultShapeWidth, maxShapeSize);
+      this._defaultShapeHeight = Math.min(this._defaultShapeHeight, maxShapeSize);
+
+      this._handleBlurAmountInput();
+      this._syncSelectionControls();
+
       this.canvas.style.display = "block";
       this.emptyState.style.display = "none";
       this._render();
@@ -115,110 +160,150 @@ class App {
   }
 
   /**
-   * Handle a click on the canvas: place a new blur shape at the click
-   * location, using whatever shape type/size is currently selected,
-   * blur just that shape's region, and redraw.
-   * @param {MouseEvent} event
+   * Create a new shape at `(x, y)` (image pixels) using the currently
+   * selected shape type and default size. Called by
+   * `InteractionController` when the user presses on empty canvas.
+   * @param {number} x
+   * @param {number} y
+   * @returns {import("./shapes.js").BlurShape}
    */
-  _handleCanvasClick(event) {
-    if (!this._sourceImage) {
-      return;
-    }
-    const { x, y } = this._renderer.eventToImageCoordinates(event);
-    const shape = this._shapeManager.addShape(
+  _createShapeAt(x, y) {
+    return this._shapeManager.addShape(
       this.shapeTypeSelect.value,
       x,
       y,
-      Number(this.shapeWidthInput.value),
-      Number(this.shapeHeightInput.value)
+      this._defaultShapeWidth,
+      this._defaultShapeHeight
     );
-    this._blurShape(shape);
+  }
+
+  /**
+   * Handle a width/height slider move: resize the selected shape
+   * directly if there is one, otherwise update the default size used
+   * for shapes created (and previewed) from now on.
+   * @param {"width"|"height"} dimension
+   */
+  _handleShapeSizeInput(dimension) {
+    const input = dimension === "width" ? this.shapeWidthInput : this.shapeHeightInput;
+    const valueSpan = dimension === "width" ? this.shapeWidthValue : this.shapeHeightValue;
+    const value = Number(input.value);
+    valueSpan.textContent = String(value);
+
+    const selected = this._shapeManager.getSelected();
+    if (selected) {
+      selected[dimension] = value;
+      this._render();
+    } else {
+      if (dimension === "width") {
+        this._defaultShapeWidth = value;
+      } else {
+        this._defaultShapeHeight = value;
+      }
+      this._updatePreviewShape();
+    }
+  }
+
+  /**
+   * The largest blur radius (in image pixels) the blur-amount slider can
+   * resolve to for the current image: half its larger dimension, but
+   * never below `MIN_MAX_BLUR_RADIUS_PX` so small images still get a
+   * meaningful maximum blur.
+   * @returns {number}
+   */
+  _getMaxBlurRadiusPx() {
+    if (!this._sourceImage) {
+      return MIN_MAX_BLUR_RADIUS_PX;
+    }
+    const maxDim = Math.max(this._sourceImage.naturalWidth, this._sourceImage.naturalHeight);
+    return Math.max(MIN_MAX_BLUR_RADIUS_PX, Math.round(maxDim / 2));
+  }
+
+  /**
+   * Map the blur-amount slider's 0-100 percentage to a pixel radius.
+   * Squaring keeps the low end of the slider controllable — most of the
+   * useful range for everyday blurring is packed into the first half —
+   * while still reaching a "flat, unrecoverable smear" at 100%.
+   * @param {number} percent - 0-100
+   * @returns {number}
+   */
+  _radiusPxFromPercent(percent) {
+    return Math.round((percent / 100) ** 2 * this._getMaxBlurRadiusPx());
+  }
+
+  /** Handle the blur-amount slider: update its label and the blur processor's radius. */
+  _handleBlurAmountInput() {
+    const percent = Number(this.blurAmountInput.value);
+    const radiusPx = this._radiusPxFromPercent(percent);
+    this.blurAmountValue.textContent = `${percent}% (≈${radiusPx}px)`;
+    this._blurProcessor.setRadius(radiusPx);
     this._render();
   }
 
   /**
-   * Track the cursor while it moves over the canvas and refresh the
-   * shape preview to follow it.
-   * @param {MouseEvent} event
-   */
-  _handleCanvasMouseMove(event) {
-    if (!this._sourceImage) {
-      return;
-    }
-    this._isHoveringCanvas = true;
-    this._lastCursorImagePosition = this._renderer.eventToImageCoordinates(event);
-    this._updatePreviewShape();
-  }
-
-  /** Hide the shape preview once the cursor leaves the canvas. */
-  _handleCanvasMouseLeave() {
-    this._isHoveringCanvas = false;
-    this._lastCursorImagePosition = null;
-    this._updatePreviewShape();
-  }
-
-  /**
-   * Rebuild the ephemeral preview shape from the current cursor
-   * position and the currently selected shape type/width/height, then
-   * redraw. The preview is never added to the `ShapeManager` and is
-   * never blurred — it's just an outline showing where and how big the
-   * next placed shape would be.
+   * Rebuild the ephemeral preview shape from the last known hover
+   * position and the currently selected shape type/default size, then
+   * redraw. The preview is never added to the `ShapeManager` and never
+   * blurred — it is only an outline showing where and how big the next
+   * placed shape would be. Suppressed while any shape is selected (a
+   * selected shape's own handles are the relevant affordance instead).
    */
   _updatePreviewShape() {
-    if (!this._sourceImage || !this._isHoveringCanvas || !this._lastCursorImagePosition) {
+    const selected = this._shapeManager.getSelected();
+    if (!this._sourceImage || !this._lastHoverPoint || selected) {
       this._previewShape = null;
     } else {
       const ShapeClass = SHAPE_CLASSES_BY_TYPE[this.shapeTypeSelect.value];
-      const { x, y } = this._lastCursorImagePosition;
       this._previewShape = new ShapeClass(
-        x,
-        y,
-        Number(this.shapeWidthInput.value),
-        Number(this.shapeHeightInput.value)
+        this._lastHoverPoint.x,
+        this._lastHoverPoint.y,
+        this._defaultShapeWidth,
+        this._defaultShapeHeight
       );
     }
     this._render();
   }
 
   /**
-   * Compute and attach the blurred patch for a single shape, using the
-   * currently selected blur strength.
-   * @param {import("./shapes.js").BlurShape} shape
+   * Keep the "delete selected" button and the width/height sliders in
+   * sync with the current selection: enable the button, and make the
+   * sliders reflect (and, via `_handleShapeSizeInput`, drive) the
+   * selected shape's size, falling back to the stored defaults when
+   * nothing is selected.
    */
-  _blurShape(shape) {
-    const sigma = Number(this.blurStrengthInput.value);
-    shape.blurredPatch = this._blurProcessor.blurRegion(this._sourceCanvas, shape.getBoundingBox(), sigma);
+  _syncSelectionControls() {
+    const selected = this._shapeManager.getSelected();
+    this.deleteSelectedButton.disabled = !selected;
+
+    const width = selected ? Math.round(selected.width) : this._defaultShapeWidth;
+    const height = selected ? Math.round(selected.height) : this._defaultShapeHeight;
+    this.shapeWidthInput.value = String(width);
+    this.shapeHeightInput.value = String(height);
+    this.shapeWidthValue.textContent = String(width);
+    this.shapeHeightValue.textContent = String(height);
   }
 
-  /**
-   * Re-blur every existing shape's region (used when the blur strength
-   * slider changes) and redraw. Each shape's region is small, so this
-   * stays fast no matter how large the source image is.
-   */
-  _reblurAllShapes() {
-    if (!this._sourceImage) {
-      return;
-    }
-    for (const shape of this._shapeManager.getShapes()) {
-      this._blurShape(shape);
-    }
-    this._render();
-  }
-
-  /** Redraw the canvas with the current image, shapes, and cursor preview. */
+  /** Redraw the canvas with the current image, shapes, selection, and cursor preview. */
   _render() {
     if (!this._sourceImage) {
       return;
     }
-    this._renderer.render(this._sourceImage, this._shapeManager.getShapes(), this._previewShape);
+    this._renderer.requestRender(this._sourceImage, this._shapeManager.getShapes(), {
+      previewShape: this._previewShape,
+      selectedShape: this._shapeManager.getSelected(),
+    });
   }
 
-  /** Export the current canvas contents in the selected format. */
+  /** Export the current image (at full resolution) in the selected format. */
   _handleDownload() {
     if (!this._sourceImage) {
       return;
     }
-    ImageExporter.download(this.canvas, this.downloadFormatSelect.value);
+    ImageExporter.download(
+      this._sourceImage,
+      this._shapeManager.getShapes(),
+      this._blurProcessor,
+      this.downloadFormatSelect.value
+    );
   }
 }
 

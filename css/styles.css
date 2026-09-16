@@ -23,6 +23,11 @@ body {
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
   background: var(--color-bg);
   color: var(--color-text);
+  overscroll-behavior: contain;
+}
+
+body.is-dragging {
+  user-select: none;
 }
 
 .app-header {
@@ -60,6 +65,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  order: 2;
 }
 
 .control-group {
@@ -76,6 +82,21 @@ body {
 input[type="range"] {
   width: 100%;
   accent-color: var(--color-accent);
+  /* Extra vertical padding widens the hit area to a finger-friendly size
+     even though the visible track stays thin. */
+  padding-block: 10px;
+}
+
+@media (pointer: coarse) {
+  input[type="range"]::-webkit-slider-thumb {
+    width: 28px;
+    height: 28px;
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    width: 28px;
+    height: 28px;
+  }
 }
 
 input[type="file"],
@@ -90,6 +111,7 @@ select {
 
 button {
   padding: 10px 14px;
+  min-height: 44px;
   border-radius: 6px;
   border: 1px solid var(--color-border);
   background: var(--color-bg);
@@ -147,6 +169,7 @@ button:disabled {
   align-items: center;
   justify-content: center;
   min-height: 400px;
+  order: 1;
 }
 
 #editor-canvas {
@@ -155,8 +178,29 @@ button:disabled {
   border-radius: 6px;
   cursor: crosshair;
   display: none;
+  /* The single most important line for usable touch dragging: without
+     it the browser claims the gesture for page scroll/zoom and the
+     pointermove stream dies mid-drag. */
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#editor-canvas:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .empty-state {
   color: var(--color-muted);
+}
+
+@media (max-width: 768px) {
+  .app-layout {
+    flex-direction: column;
+    padding: 16px;
+  }
+
+  .controls-panel {
+    width: 100%;
+  }
 }
