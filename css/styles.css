@@ -3,6 +3,12 @@
    Layout: a fixed-width controls panel next to a flexible canvas panel.
    ------------------------------------------------------------------- */
 
+#shamelessPlug {
+  color: #7ba3f2;
+}
+#shamelessPlug:hover  {
+  color: #FFFFFF;
+}
 :root {
   --color-bg: #1b1d23;
   --color-panel: #24262e;
